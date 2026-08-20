@@ -39,8 +39,12 @@ def prebuilt_bench() -> pathlib.Path | None:
 def run(bench: pathlib.Path, model: str, threads: int, ngl: int, metric: str, reps: int) -> float:
     is_prefill = metric.startswith("pp")
     shape = ["-p", metric[2:], "-n", "0"] if is_prefill else ["-p", "0", "-n", "128"]
+    # A CUDA-enabled prebuilt still offloads compute ops to the GPU at -ngl 0
+    # (op-offload), which would silently turn a "compiler" comparison into a
+    # GPU-vs-CPU one. -nopo 1 forces real CPU compute on both sides.
+    pin_cpu = ["-nopo", "1"] if ngl == 0 else []
     proc = subprocess.run(
-        [str(bench), "-m", model, "-t", str(threads), "-ngl", str(ngl), *shape, "-r", str(reps)],
+        [str(bench), "-m", model, "-t", str(threads), "-ngl", str(ngl), *pin_cpu, *shape, "-r", str(reps)],
         capture_output=True, text=True, check=False, timeout=1800,
     )
     return labkit.bench_metric(proc.stdout + proc.stderr, metric)
@@ -159,7 +163,8 @@ interchangeable explanations for a speedup.
 Host `{labkit.host_tag()}` · CPU `{cpu.get('model', '?')}`
 Vector extensions detected: {', '.join(exts) or 'none'}
 llama.cpp `{labkit.LLAMA_CPP_BUILD}` both sides · `threads={threads}` ·
-**both pinned to `ngl=0`** so this isolates the compiler ·
+**both pinned to `ngl=0 -nopo 1`** (CPU compute, op-offload off) so this
+isolates the compiler ·
 metric `{args.metric}`, {args.reps} repetitions
 {mismatch_block}
 {table}

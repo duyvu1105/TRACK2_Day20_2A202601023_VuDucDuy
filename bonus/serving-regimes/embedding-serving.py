@@ -88,11 +88,17 @@ def embed_offline(texts: list[str], vocab: dict[str, int]) -> list[np.ndarray]:
     return out
 
 
+_HTTPX_CLIENT = None  # reuse one connection; per-request httpx.post() is slow on Windows
+
+
 def embed_remote(texts: list[str], base_url: str) -> list[np.ndarray]:
+    global _HTTPX_CLIENT
     import httpx
 
-    r = httpx.post(f"{base_url}/embeddings",
-                   json={"model": "local", "input": texts}, timeout=120.0)
+    if _HTTPX_CLIENT is None:
+        _HTTPX_CLIENT = httpx.Client(trust_env=False, timeout=120.0)
+    r = _HTTPX_CLIENT.post(f"{base_url}/embeddings",
+                           json={"model": "local", "input": texts})
     r.raise_for_status()
     out = []
     for d in r.json()["data"]:

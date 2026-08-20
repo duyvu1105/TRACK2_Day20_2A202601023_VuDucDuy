@@ -1,0 +1,22 @@
+{
+  "kv_f16": {
+    "2048": {
+      "vram_peak_mib": 1123.0,
+      "rss_peak_mib": 985.3
+    },
+    "16384": {
+      "vram_peak_mib": 1291.0,
+      "rss_peak_mib": 1169.5
+    }
+  },
+  "kv_q8_0": {
+    "2048": {
+      "vram_peak_mib": 1113.0,
+      "rss_peak_mib": 977.7
+    },
+    "16384": {
+      "vram_peak_mib": 1201.0,
+      "rss_peak_mib": 1082.9
+    }
+  }
+}

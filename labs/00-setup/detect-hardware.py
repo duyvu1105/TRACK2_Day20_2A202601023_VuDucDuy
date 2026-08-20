@@ -76,6 +76,54 @@ def detect_cpu() -> dict:
                 info["cores_physical"] = int(data.get("NumberOfCores") or 0) or None
             except (ValueError, KeyError):
                 pass
+        if not info.get("cores_physical"):
+            try:
+                import ctypes
+
+                # Each RelationProcessorCore record describes one physical core.
+                size = ctypes.c_ulong(0)
+                kernel32 = ctypes.windll.kernel32
+                kernel32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))
+                raw = ctypes.create_string_buffer(size.value)
+                if kernel32.GetLogicalProcessorInformationEx(0, raw, ctypes.byref(size)):
+                    offset = 0
+                    cores = 0
+                    while offset + 8 <= size.value:
+                        relationship = int.from_bytes(raw[offset:offset + 4], "little")
+                        record_size = int.from_bytes(raw[offset + 4:offset + 8], "little")
+                        if relationship == 0:
+                            cores += 1
+                        if record_size < 8:
+                            break
+                        offset += record_size
+                    info["cores_physical"] = cores or None
+            except (AttributeError, OSError):
+                pass
+        if not info.get("model"):
+            try:
+                import winreg
+
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                ) as key:
+                    info["model"] = str(
+                        winreg.QueryValueEx(key, "ProcessorNameString")[0]
+                    ).strip()
+            except OSError:
+                pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            # PF_AVX(27)/PF_AVX2(39) are CPUID-backed and accurate. PF_AVX512F(40)
+            # only proves OS support -- Windows sets it even on CPUs without
+            # AVX-512 hardware -- so AVX-512 is left unset on Windows rather than
+            # reported wrong.
+            info["avx"] = bool(k32.IsProcessorFeaturePresent(27))
+            info["avx2"] = bool(k32.IsProcessorFeaturePresent(39))
+        except (AttributeError, OSError):
+            pass
     info.setdefault("model", "unknown")
     if not info.get("cores_physical"):
         info["cores_physical"] = info["cores_logical"]
@@ -100,9 +148,33 @@ def detect_ram_gb() -> float:
              "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
             timeout=20,
         )
-        digits = "".join(c for c in out if c.isdigit())
-        if digits:
-            return round(int(digits) / 1024**3, 1)
+        value = out.strip()
+        if rc == 0 and value.isdigit():
+            return round(int(value) / 1024**3, 1)
+        # CIM can be blocked by endpoint policy or a sandbox.  Use the native
+        # Win32 API rather than accidentally parsing digits from an error code.
+        try:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("memory_load", ctypes.c_ulong),
+                    ("total_physical", ctypes.c_ulonglong),
+                    ("available_physical", ctypes.c_ulonglong),
+                    ("total_page_file", ctypes.c_ulonglong),
+                    ("available_page_file", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("available_virtual", ctypes.c_ulonglong),
+                    ("available_extended_virtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return round(status.total_physical / 1024**3, 1)
+        except (AttributeError, OSError):
+            pass
     return 0.0
 
 
